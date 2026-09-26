@@ -114,13 +114,12 @@ app.use(
   cors({
     origin:
       process.env.CLIENT_URL ||
-      "http://localhost:5174",
+      "http://localhost:5173",
     credentials: true
   })
 );
 
 app.use(express.json());
-
 app.use(passport.initialize());
 
 /* =========================================================
@@ -269,10 +268,7 @@ app.get("/api/auth/me", (req, res) => {
       user: publicUser(user)
     });
   } catch (error) {
-    console.error(
-      "AUTH ME ERROR:",
-      error.message
-    );
+    console.error("AUTH ME ERROR:", error.message);
 
     res.status(401).json({
       message: "Invalid or expired token."
@@ -302,9 +298,7 @@ app.post("/api/auth/forgot-password", (req, res) => {
     });
   }
 
-  const token = crypto
-    .randomBytes(32)
-    .toString("hex");
+  const token = crypto.randomBytes(32).toString("hex");
 
   user.resetToken = token;
   user.resetExpires =
@@ -326,11 +320,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
   try {
     const { token, password } = req.body;
 
-    if (
-      !token ||
-      !password ||
-      password.length < 8
-    ) {
+    if (!token || !password || password.length < 8) {
       return res.status(400).json({
         message:
           "Valid token and password (8+ characters) are required."
@@ -347,13 +337,11 @@ app.post("/api/auth/reset-password", async (req, res) => {
 
     if (!user) {
       return res.status(400).json({
-        message:
-          "Reset token is invalid or expired."
+        message: "Reset token is invalid or expired."
       });
     }
 
-    user.passwordHash =
-      await hashPassword(password);
+    user.passwordHash = await hashPassword(password);
 
     delete user.resetToken;
     delete user.resetExpires;
@@ -361,18 +349,13 @@ app.post("/api/auth/reset-password", async (req, res) => {
     writeUsers(users);
 
     res.json({
-      message:
-        "Password reset successfully."
+      message: "Password reset successfully."
     });
   } catch (error) {
-    console.error(
-      "RESET PASSWORD ERROR:",
-      error
-    );
+    console.error("RESET PASSWORD ERROR:", error);
 
     res.status(500).json({
-      message:
-        "Password reset failed."
+      message: "Password reset failed."
     });
   }
 });
@@ -400,7 +383,7 @@ app.get(
     failureRedirect:
       `${
         process.env.CLIENT_URL ||
-        "http://localhost:5174"
+        "http://localhost:5173"
       }/?google=failed`
   }),
   (req, res) => {
@@ -409,7 +392,7 @@ app.get(
 
       const frontendUrl =
         process.env.CLIENT_URL ||
-        "http://localhost:5174";
+        "http://localhost:5173";
 
       res.redirect(
         `${frontendUrl}/?google=success&token=${encodeURIComponent(
@@ -424,7 +407,7 @@ app.get(
 
       const frontendUrl =
         process.env.CLIENT_URL ||
-        "http://localhost:5174";
+        "http://localhost:5173";
 
       res.redirect(
         `${frontendUrl}/?google=failed`
@@ -437,9 +420,7 @@ app.get(
    START SERVER
 ========================================================= */
 
-const port = Number(
-  process.env.PORT || 5000
-);
+const port = Number(process.env.PORT || 5000);
 
 app.listen(port, () => {
   console.log(
