@@ -1,6 +1,8 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import passport from "passport";
+import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -42,20 +44,89 @@ function publicUser(user) {
   };
 }
 
-// Create Express application
+/* =========================================================
+   GOOGLE OAUTH
+========================================================= */
+
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL:
+        process.env.GOOGLE_CALLBACK_URL ||
+        "http://localhost:5000/api/auth/google/callback"
+    },
+    async (_accessToken, _refreshToken, profile, done) => {
+      try {
+        const email = profile.emails?.[0]?.value?.toLowerCase();
+
+        if (!email) {
+          return done(
+            new Error("Google account email was not provided.")
+          );
+        }
+
+        const users = readUsers();
+
+        let user = users.find(
+          (u) => u.email?.toLowerCase() === email
+        );
+
+        if (!user) {
+          user = {
+            id: crypto.randomUUID(),
+            name:
+              profile.displayName ||
+              profile.name?.givenName ||
+              "Google User",
+            email,
+            passwordHash: "",
+            createdAt: new Date().toISOString(),
+            provider: "google",
+            googleId: profile.id
+          };
+
+          users.push(user);
+        } else {
+          user.googleId = profile.id;
+          user.provider = user.provider || "google";
+        }
+
+        writeUsers(users);
+
+        return done(null, user);
+      } catch (error) {
+        console.error("GOOGLE STRATEGY ERROR:", error);
+        return done(error);
+      }
+    }
+  )
+);
+
 const app = express();
 
-// Middleware
+/* =========================================================
+   MIDDLEWARE
+========================================================= */
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    origin:
+      process.env.CLIENT_URL ||
+      "http://localhost:5174",
     credentials: true
   })
 );
 
 app.use(express.json());
 
-// Health check
+app.use(passport.initialize());
+
+/* =========================================================
+   HEALTH CHECK
+========================================================= */
+
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
@@ -64,7 +135,10 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-// Register
+/* =========================================================
+   REGISTER
+========================================================= */
+
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -84,7 +158,11 @@ app.post("/api/auth/register", async (req, res) => {
     const users = readUsers();
     const normalizedEmail = email.trim().toLowerCase();
 
-    if (users.some((u) => u.email === normalizedEmail)) {
+    if (
+      users.some(
+        (u) => u.email?.toLowerCase() === normalizedEmail
+      )
+    ) {
       return res.status(409).json({
         message: "An account with this email already exists."
       });
@@ -116,7 +194,10 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-// Login
+/* =========================================================
+   LOGIN
+========================================================= */
+
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -124,12 +205,18 @@ app.post("/api/auth/login", async (req, res) => {
     const users = readUsers();
 
     const user = users.find(
-      (u) => u.email === email?.trim().toLowerCase()
+      (u) =>
+        u.email?.toLowerCase() ===
+        email?.trim().toLowerCase()
     );
 
     if (
       !user ||
-      !(await comparePassword(password || "", user.passwordHash))
+      !user.passwordHash ||
+      !(await comparePassword(
+        password || "",
+        user.passwordHash
+      ))
     ) {
       return res.status(401).json({
         message: "Invalid email or password."
@@ -151,7 +238,10 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// Current logged-in user
+/* =========================================================
+   CURRENT USER
+========================================================= */
+
 app.get("/api/auth/me", (req, res) => {
   try {
     const auth = req.headers.authorization || "";
@@ -179,7 +269,10 @@ app.get("/api/auth/me", (req, res) => {
       user: publicUser(user)
     });
   } catch (error) {
-    console.error("AUTH ME ERROR:", error.message);
+    console.error(
+      "AUTH ME ERROR:",
+      error.message
+    );
 
     res.status(401).json({
       message: "Invalid or expired token."
@@ -187,14 +280,19 @@ app.get("/api/auth/me", (req, res) => {
   }
 });
 
-// Forgot password
+/* =========================================================
+   FORGOT PASSWORD
+========================================================= */
+
 app.post("/api/auth/forgot-password", (req, res) => {
   const { email } = req.body;
 
   const users = readUsers();
 
   const user = users.find(
-    (u) => u.email === email?.trim().toLowerCase()
+    (u) =>
+      u.email?.toLowerCase() ===
+      email?.trim().toLowerCase()
   );
 
   if (!user) {
@@ -204,10 +302,13 @@ app.post("/api/auth/forgot-password", (req, res) => {
     });
   }
 
-  const token = crypto.randomBytes(32).toString("hex");
+  const token = crypto
+    .randomBytes(32)
+    .toString("hex");
 
   user.resetToken = token;
-  user.resetExpires = Date.now() + 15 * 60 * 1000;
+  user.resetExpires =
+    Date.now() + 15 * 60 * 1000;
 
   writeUsers(users);
 
@@ -217,12 +318,19 @@ app.post("/api/auth/forgot-password", (req, res) => {
   });
 });
 
-// Reset password
+/* =========================================================
+   RESET PASSWORD
+========================================================= */
+
 app.post("/api/auth/reset-password", async (req, res) => {
   try {
     const { token, password } = req.body;
 
-    if (!token || !password || password.length < 8) {
+    if (
+      !token ||
+      !password ||
+      password.length < 8
+    ) {
       return res.status(400).json({
         message:
           "Valid token and password (8+ characters) are required."
@@ -239,11 +347,13 @@ app.post("/api/auth/reset-password", async (req, res) => {
 
     if (!user) {
       return res.status(400).json({
-        message: "Reset token is invalid or expired."
+        message:
+          "Reset token is invalid or expired."
       });
     }
 
-    user.passwordHash = await hashPassword(password);
+    user.passwordHash =
+      await hashPassword(password);
 
     delete user.resetToken;
     delete user.resetExpires;
@@ -251,27 +361,85 @@ app.post("/api/auth/reset-password", async (req, res) => {
     writeUsers(users);
 
     res.json({
-      message: "Password reset successfully."
+      message:
+        "Password reset successfully."
     });
   } catch (error) {
-    console.error("RESET PASSWORD ERROR:", error);
+    console.error(
+      "RESET PASSWORD ERROR:",
+      error
+    );
 
     res.status(500).json({
-      message: "Password reset failed."
+      message:
+        "Password reset failed."
     });
   }
 });
 
-// Google OAuth placeholder
-app.get("/api/auth/google", (_req, res) => {
-  res.status(501).json({
-    message:
-      "Google OAuth is not configured yet. Add Google OAuth credentials and callback handling before production use."
-  });
-});
+/* =========================================================
+   GOOGLE LOGIN
+========================================================= */
 
-// Start server
-const port = Number(process.env.PORT || 5000);
+app.get(
+  "/api/auth/google",
+  passport.authenticate("google", {
+    scope: ["profile", "email"],
+    session: false
+  })
+);
+
+/* =========================================================
+   GOOGLE CALLBACK
+========================================================= */
+
+app.get(
+  "/api/auth/google/callback",
+  passport.authenticate("google", {
+    session: false,
+    failureRedirect:
+      `${
+        process.env.CLIENT_URL ||
+        "http://localhost:5174"
+      }/?google=failed`
+  }),
+  (req, res) => {
+    try {
+      const token = createToken(req.user);
+
+      const frontendUrl =
+        process.env.CLIENT_URL ||
+        "http://localhost:5174";
+
+      res.redirect(
+        `${frontendUrl}/?google=success&token=${encodeURIComponent(
+          token
+        )}`
+      );
+    } catch (error) {
+      console.error(
+        "GOOGLE CALLBACK ERROR:",
+        error
+      );
+
+      const frontendUrl =
+        process.env.CLIENT_URL ||
+        "http://localhost:5174";
+
+      res.redirect(
+        `${frontendUrl}/?google=failed`
+      );
+    }
+  }
+);
+
+/* =========================================================
+   START SERVER
+========================================================= */
+
+const port = Number(
+  process.env.PORT || 5000
+);
 
 app.listen(port, () => {
   console.log(
