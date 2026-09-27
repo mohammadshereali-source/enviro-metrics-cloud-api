@@ -400,10 +400,7 @@ app.get(
         )}`
       );
     } catch (error) {
-      console.error(
-        "GOOGLE CALLBACK ERROR:",
-        error
-      );
+      console.error("GOOGLE CALLBACK ERROR:", error);
 
       const frontendUrl =
         process.env.CLIENT_URL ||
