@@ -20,11 +20,16 @@ const __dirname = path.dirname(__filename);
 
 const dataDir = path.join(__dirname, "..", "data");
 const usersFile = path.join(dataDir, "users.json");
+const devicesFile = path.join(dataDir, "devices.json");
 
 fs.mkdirSync(dataDir, { recursive: true });
 
 if (!fs.existsSync(usersFile)) {
   fs.writeFileSync(usersFile, "[]");
+}
+
+if (!fs.existsSync(devicesFile)) {
+  fs.writeFileSync(devicesFile, "[]");
 }
 
 function readUsers() {
@@ -33,6 +38,17 @@ function readUsers() {
 
 function writeUsers(users) {
   fs.writeFileSync(usersFile, JSON.stringify(users, null, 2));
+}
+
+function readDevices() {
+  return JSON.parse(fs.readFileSync(devicesFile, "utf8"));
+}
+
+function writeDevices(devices) {
+  fs.writeFileSync(
+    devicesFile,
+    JSON.stringify(devices, null, 2)
+  );
 }
 
 function publicUser(user) {
@@ -59,7 +75,8 @@ passport.use(
     },
     async (_accessToken, _refreshToken, profile, done) => {
       try {
-        const email = profile.emails?.[0]?.value?.toLowerCase();
+        const email =
+          profile.emails?.[0]?.value?.toLowerCase();
 
         if (!email) {
           return done(
@@ -123,6 +140,47 @@ app.use(express.json());
 app.use(passport.initialize());
 
 /* =========================================================
+   AUTHENTICATION MIDDLEWARE
+========================================================= */
+
+function authenticateToken(req, res, next) {
+  try {
+    const auth = req.headers.authorization || "";
+
+    if (!auth.startsWith("Bearer ")) {
+      return res.status(401).json({
+        message: "Missing authentication token."
+      });
+    }
+
+    const token = auth.slice(7);
+    const payload = verifyToken(token);
+
+    const user = readUsers().find(
+      (u) => u.id === payload.sub
+    );
+
+    if (!user) {
+      return res.status(401).json({
+        message: "User not found."
+      });
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    console.error(
+      "AUTHENTICATION ERROR:",
+      error.message
+    );
+
+    return res.status(401).json({
+      message: "Invalid or expired token."
+    });
+  }
+}
+
+/* =========================================================
    HEALTH CHECK
 ========================================================= */
 
@@ -144,26 +202,32 @@ app.post("/api/auth/register", async (req, res) => {
 
     if (!name?.trim() || !email?.trim() || !password) {
       return res.status(400).json({
-        message: "Name, email and password are required."
+        message:
+          "Name, email and password are required."
       });
     }
 
     if (password.length < 8) {
       return res.status(400).json({
-        message: "Password must be at least 8 characters."
+        message:
+          "Password must be at least 8 characters."
       });
     }
 
     const users = readUsers();
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmail =
+      email.trim().toLowerCase();
 
     if (
       users.some(
-        (u) => u.email?.toLowerCase() === normalizedEmail
+        (u) =>
+          u.email?.toLowerCase() ===
+          normalizedEmail
       )
     ) {
       return res.status(409).json({
-        message: "An account with this email already exists."
+        message:
+          "An account with this email already exists."
       });
     }
 
@@ -268,7 +332,10 @@ app.get("/api/auth/me", (req, res) => {
       user: publicUser(user)
     });
   } catch (error) {
-    console.error("AUTH ME ERROR:", error.message);
+    console.error(
+      "AUTH ME ERROR:",
+      error.message
+    );
 
     res.status(401).json({
       message: "Invalid or expired token."
@@ -280,85 +347,102 @@ app.get("/api/auth/me", (req, res) => {
    FORGOT PASSWORD
 ========================================================= */
 
-app.post("/api/auth/forgot-password", (req, res) => {
-  const { email } = req.body;
-
-  const users = readUsers();
-
-  const user = users.find(
-    (u) =>
-      u.email?.toLowerCase() ===
-      email?.trim().toLowerCase()
-  );
-
-  if (!user) {
-    return res.json({
-      message:
-        "If the account exists, reset instructions have been created."
-    });
-  }
-
-  const token = crypto.randomBytes(32).toString("hex");
-
-  user.resetToken = token;
-  user.resetExpires =
-    Date.now() + 15 * 60 * 1000;
-
-  writeUsers(users);
-
-  res.json({
-    message: "Reset instructions created.",
-    devResetToken: token
-  });
-});
-
-/* =========================================================
-   RESET PASSWORD
-========================================================= */
-
-app.post("/api/auth/reset-password", async (req, res) => {
-  try {
-    const { token, password } = req.body;
-
-    if (!token || !password || password.length < 8) {
-      return res.status(400).json({
-        message:
-          "Valid token and password (8+ characters) are required."
-      });
-    }
+app.post(
+  "/api/auth/forgot-password",
+  (req, res) => {
+    const { email } = req.body;
 
     const users = readUsers();
 
     const user = users.find(
       (u) =>
-        u.resetToken === token &&
-        u.resetExpires > Date.now()
+        u.email?.toLowerCase() ===
+        email?.trim().toLowerCase()
     );
 
     if (!user) {
-      return res.status(400).json({
-        message: "Reset token is invalid or expired."
+      return res.json({
+        message:
+          "If the account exists, reset instructions have been created."
       });
     }
 
-    user.passwordHash = await hashPassword(password);
+    const token =
+      crypto.randomBytes(32).toString("hex");
 
-    delete user.resetToken;
-    delete user.resetExpires;
+    user.resetToken = token;
+    user.resetExpires =
+      Date.now() + 15 * 60 * 1000;
 
     writeUsers(users);
 
     res.json({
-      message: "Password reset successfully."
-    });
-  } catch (error) {
-    console.error("RESET PASSWORD ERROR:", error);
-
-    res.status(500).json({
-      message: "Password reset failed."
+      message: "Reset instructions created.",
+      devResetToken: token
     });
   }
-});
+);
+
+/* =========================================================
+   RESET PASSWORD
+========================================================= */
+
+app.post(
+  "/api/auth/reset-password",
+  async (req, res) => {
+    try {
+      const { token, password } = req.body;
+
+      if (
+        !token ||
+        !password ||
+        password.length < 8
+      ) {
+        return res.status(400).json({
+          message:
+            "Valid token and password (8+ characters) are required."
+        });
+      }
+
+      const users = readUsers();
+
+      const user = users.find(
+        (u) =>
+          u.resetToken === token &&
+          u.resetExpires > Date.now()
+      );
+
+      if (!user) {
+        return res.status(400).json({
+          message:
+            "Reset token is invalid or expired."
+        });
+      }
+
+      user.passwordHash =
+        await hashPassword(password);
+
+      delete user.resetToken;
+      delete user.resetExpires;
+
+      writeUsers(users);
+
+      res.json({
+        message:
+          "Password reset successfully."
+      });
+    } catch (error) {
+      console.error(
+        "RESET PASSWORD ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        message: "Password reset failed."
+      });
+    }
+  }
+);
 
 /* =========================================================
    GOOGLE LOGIN
@@ -400,7 +484,10 @@ app.get(
         )}`
       );
     } catch (error) {
-      console.error("GOOGLE CALLBACK ERROR:", error);
+      console.error(
+        "GOOGLE CALLBACK ERROR:",
+        error
+      );
 
       const frontendUrl =
         process.env.CLIENT_URL ||
@@ -414,10 +501,349 @@ app.get(
 );
 
 /* =========================================================
+   CLOUD DEVICES
+========================================================= */
+
+/*
+  GET ALL DEVICES
+*/
+
+app.get(
+  "/api/devices",
+  authenticateToken,
+  (req, res) => {
+    try {
+      const devices = readDevices();
+
+      const userDevices = devices.filter(
+        (device) =>
+          device.userId === req.user.id
+      );
+
+      res.json({
+        devices: userDevices
+      });
+    } catch (error) {
+      console.error(
+        "GET DEVICES ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        message:
+          "Unable to load cloud devices."
+      });
+    }
+  }
+);
+
+/*
+  GET SINGLE DEVICE
+*/
+
+app.get(
+  "/api/devices/:id",
+  authenticateToken,
+  (req, res) => {
+    try {
+      const devices = readDevices();
+
+      const device = devices.find(
+        (item) =>
+          item.id === req.params.id &&
+          item.userId === req.user.id
+      );
+
+      if (!device) {
+        return res.status(404).json({
+          message: "Device not found."
+        });
+      }
+
+      res.json({
+        device
+      });
+    } catch (error) {
+      console.error(
+        "GET DEVICE ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        message:
+          "Unable to load device."
+      });
+    }
+  }
+);
+
+/*
+  ADD NEW DEVICE
+*/
+
+app.post(
+  "/api/devices",
+  authenticateToken,
+  (req, res) => {
+    try {
+      const {
+        deviceId,
+        name,
+        location,
+        deviceType
+      } = req.body;
+
+      if (
+        !deviceId?.trim() ||
+        !name?.trim()
+      ) {
+        return res.status(400).json({
+          message:
+            "Device ID and device name are required."
+        });
+      }
+
+      const devices = readDevices();
+
+      const alreadyExists = devices.find(
+        (device) =>
+          device.deviceId.toLowerCase() ===
+            deviceId.trim().toLowerCase() &&
+          device.userId === req.user.id
+      );
+
+      if (alreadyExists) {
+        return res.status(409).json({
+          message:
+            "This device is already registered."
+        });
+      }
+
+      const now =
+        new Date().toISOString();
+
+      const device = {
+        id: crypto.randomUUID(),
+        userId: req.user.id,
+        deviceId: deviceId.trim(),
+        name: name.trim(),
+        location:
+          location?.trim() || "Not specified",
+        deviceType:
+          deviceType?.trim() ||
+          "Environmental Monitoring Device",
+        status: "offline",
+        lastSeen: null,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      devices.push(device);
+      writeDevices(devices);
+
+      res.status(201).json({
+        message:
+          "Device added successfully.",
+        device
+      });
+    } catch (error) {
+      console.error(
+        "ADD DEVICE ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        message:
+          "Unable to add device."
+      });
+    }
+  }
+);
+
+/*
+  UPDATE DEVICE
+*/
+
+app.put(
+  "/api/devices/:id",
+  authenticateToken,
+  (req, res) => {
+    try {
+      const devices = readDevices();
+
+      const device = devices.find(
+        (item) =>
+          item.id === req.params.id &&
+          item.userId === req.user.id
+      );
+
+      if (!device) {
+        return res.status(404).json({
+          message: "Device not found."
+        });
+      }
+
+      const {
+        name,
+        location,
+        deviceType
+      } = req.body;
+
+      if (name !== undefined) {
+        device.name =
+          String(name).trim();
+      }
+
+      if (location !== undefined) {
+        device.location =
+          String(location).trim();
+      }
+
+      if (deviceType !== undefined) {
+        device.deviceType =
+          String(deviceType).trim();
+      }
+
+      device.updatedAt =
+        new Date().toISOString();
+
+      writeDevices(devices);
+
+      res.json({
+        message:
+          "Device updated successfully.",
+        device
+      });
+    } catch (error) {
+      console.error(
+        "UPDATE DEVICE ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        message:
+          "Unable to update device."
+      });
+    }
+  }
+);
+
+/*
+  DELETE DEVICE
+*/
+
+app.delete(
+  "/api/devices/:id",
+  authenticateToken,
+  (req, res) => {
+    try {
+      const devices = readDevices();
+
+      const index = devices.findIndex(
+        (device) =>
+          device.id === req.params.id &&
+          device.userId === req.user.id
+      );
+
+      if (index === -1) {
+        return res.status(404).json({
+          message: "Device not found."
+        });
+      }
+
+      devices.splice(index, 1);
+
+      writeDevices(devices);
+
+      res.json({
+        message:
+          "Device deleted successfully."
+      });
+    } catch (error) {
+      console.error(
+        "DELETE DEVICE ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        message:
+          "Unable to delete device."
+      });
+    }
+  }
+);
+
+/*
+  DEVICE HEARTBEAT
+
+  Environmental instruments can call this
+  endpoint to tell the cloud that they are online.
+*/
+
+app.post(
+  "/api/devices/heartbeat",
+  (req, res) => {
+    try {
+      const { deviceId } = req.body;
+
+      if (!deviceId?.trim()) {
+        return res.status(400).json({
+          message:
+            "Device ID is required."
+        });
+      }
+
+      const devices = readDevices();
+
+      const device = devices.find(
+        (item) =>
+          item.deviceId.toLowerCase() ===
+          deviceId.trim().toLowerCase()
+      );
+
+      if (!device) {
+        return res.status(404).json({
+          message:
+            "Device is not registered."
+        });
+      }
+
+      const now =
+        new Date().toISOString();
+
+      device.status = "online";
+      device.lastSeen = now;
+      device.updatedAt = now;
+
+      writeDevices(devices);
+
+      res.json({
+        ok: true,
+        message: "Heartbeat received.",
+        deviceId: device.deviceId,
+        status: device.status,
+        lastSeen: device.lastSeen
+      });
+    } catch (error) {
+      console.error(
+        "HEARTBEAT ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        message:
+          "Unable to process heartbeat."
+      });
+    }
+  }
+);
+
+/* =========================================================
    START SERVER
 ========================================================= */
 
-const port = Number(process.env.PORT || 5000);
+const port =
+  Number(process.env.PORT || 5000);
 
 app.listen(port, () => {
   console.log(
